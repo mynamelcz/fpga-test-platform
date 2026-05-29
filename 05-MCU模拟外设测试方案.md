@@ -58,42 +58,47 @@ DUT MCU
 
 ```mermaid
 flowchart TB
-    PC[上位机软件]
-    Core[核心 FPGA 主板]
+    PC["上位机软件"]
+    Core["核心 FPGA 主板<br/>数字控制 / 协议 / Pattern / Capture"]
 
-    subgraph Ext[MCU 模拟外设测试扩展板]
-        DAC[可编程 DAC / 电压源]
-        ADC[板载 ADC / 采样通道]
-        MUX[模拟开关矩阵]
-        LOAD[可控负载 / 电阻网络]
-        REF[参考电压源]
-        CMP[比较器辅助电路]
-        PROT[保护与限流]
+    subgraph Ext["MCU 模拟外设测试扩展板（每通道含保护与限流）"]
+        direction TB
+        DAC["可编程 DAC / 电压源"]
+        REF["参考电压源"]
+        MUX["模拟开关矩阵<br/>（激励/采集通道路由）"]
+        ADC["板载 ADC / 采样通道"]
+        LOAD["可控负载 / 电阻网络"]
     end
 
-    subgraph DUT[DUT MCU 子板]
-        DUTADC[DUT ADC]
-        DUTDAC[DUT DAC]
-        DUTCMP[DUT 比较器]
-        DUTOPA[DUT 运放]
-        DUTLDO[DUT LDO / Reference]
-        IF[SPI/I2C/UART/SWD/GPIO]
+    subgraph DUT["DUT MCU 子板"]
+        direction TB
+        IF["数字接口<br/>SPI/I2C/UART/SWD/GPIO"]
+        DUTADC["DUT ADC"]
+        DUTDAC["DUT DAC"]
+        DUTCMP["DUT 比较器"]
+        DUTOPA["DUT 运放"]
+        DUTLDO["DUT LDO / Reference"]
     end
 
-    PC --> Core
-    Core --> DAC
-    Core --> MUX
-    Core --> LOAD
-    Core --> REF
-    Core --> IF
-    DAC --> DUTADC
-    DUTDAC --> ADC
-    REF --> DUTCMP
-    CMP --> DUTCMP
-    DUTOPA --> ADC
-    DUTLDO --> ADC
-    LOAD --> DUTLDO
-    IF --> Core
+    PC <--> Core
+    Core <-->|"数字控制 / 寄存器回读"| IF
+
+    %% 激励路径（实线）：扩展板 → DUT
+    Core -->|"配置激励"| DAC
+    Core -->|"配置路由"| MUX
+    DAC --> MUX
+    REF --> MUX
+    MUX -->|"激励电压"| DUTADC
+    MUX -->|"阈值/输入"| DUTCMP
+    MUX -->|"输入"| DUTOPA
+    LOAD -->|"加载"| DUTLDO
+
+    %% 采集路径（虚线）：DUT 输出 → 板载 ADC
+    DUTDAC -.->|"输出"| MUX
+    DUTOPA -.->|"输出"| MUX
+    DUTLDO -.->|"输出"| MUX
+    MUX -.-> ADC
+    ADC -.->|"测量值"| Core
 ```
 
 ## 可测模块
@@ -310,6 +315,21 @@ DUT 打开 LDO / Reference
 - 通道默认断开
 - 上电默认安全状态
 - 切换动作受上位机配置和安全规则限制
+
+### ⚠️ 矩阵不是"零代价任意路由"——需保留直连旁路
+
+模拟开关有 **导通电阻 Ron、漏电流、电荷注入、寄生电容、带宽限制**，串入精密测量链路会直接劣化精度与带宽。因此"任意 DAC/ADC 与引脚自由路由"是**研发级功能验证**的便利，不能当成无损通用路由。
+
+设计边界：
+
+```text
+· 矩阵路由：用于功能验证、通道复用、减少人工接线（多数场景够用）
+· 直连旁路（bypass）：对高精度/高带宽测量路径，关键 DUT 引脚预留
+                      "直达 ADC/激励、绕开开关矩阵"的选项
+· 上位机配置文件应能为某通道指定 routing=matrix | direct
+```
+
+这与本方案"研发级而非参数级"的定位一致（见测试边界一节）：要精度时旁路矩阵，要灵活时走矩阵，两者不可混为一谈。
 
 ## 校准与误差管理
 

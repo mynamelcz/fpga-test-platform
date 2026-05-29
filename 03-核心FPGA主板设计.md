@@ -54,42 +54,49 @@ Trigger / Sync
 
 ```mermaid
 flowchart TB
-    PC[上位机软件]
-    USB[USB 3.0 / Ethernet / 预留 PCIe]
+    PC["上位机软件"]
+    USB["USB3 主链路 / GigE 可选"]
 
-    subgraph Board[核心 FPGA 主板]
-        FPGA[主 FPGA]
-        DDR[外挂 DDR]
-        Flash[配置 Flash]
-        MCU[管理 MCU / CPLD]
-        CLK[时钟系统]
-        PMIC[电源系统]
-        CONN[扩展连接器阵列]
-        DBG[JTAG / UART / 调试接口]
+    subgraph Board["核心 FPGA 主板"]
+        direction TB
+
+        subgraph FPGA["主 FPGA"]
+            direction TB
+            Host["Host Interface<br/>+ 寄存器配置总线"]
+            Pattern["Pattern Engine"]
+            Capture["Capture Engine"]
+            Proto["协议控制器"]
+            Trigger["Trigger / Sync"]
+            DMA["DDR DMA /<br/>Buffer Manager"]
+        end
+
+        DDR["外挂 DDR"]
+        Flash["配置 Flash"]
+        MCU["管理 MCU / CPLD<br/>电源时序 / 安全 / 板卡识别"]
+        CLK["时钟系统"]
+        PMIC["电源系统"]
+        CONN["扩展连接器阵列"]
+        DBG["JTAG / UART / 调试"]
     end
 
-    subgraph FPGA_INT[FPGA 内部逻辑]
-        Pattern[Pattern Engine]
-        Capture[Capture Engine]
-        Proto[协议控制器]
-        Trigger[Trigger / Sync]
-        DMA[DDR DMA / Buffer Manager]
-        Reg[寄存器配置总线]
-    end
+    PC <--> USB
+    USB <--> Host
+    Host --> Pattern & Capture & Proto & Trigger & DMA
 
-    PC <--> USB <--> FPGA
-    FPGA <--> DDR
-    FPGA --> Pattern
-    FPGA --> Capture
-    FPGA --> Proto
-    FPGA --> Trigger
-    FPGA --> DMA
-    FPGA --> Reg
-    MCU --> PMIC
-    MCU --> CONN
+    DMA <-->|"缓存"| DDR
+    Flash -.->|"配置加载"| FPGA
     CLK --> FPGA
-    FPGA --> CONN
-    DBG --> FPGA
+    DBG -.-> FPGA
+
+    %% 面向 DUT 的资源经连接器引出
+    Pattern --> CONN
+    Capture --> CONN
+    Proto --> CONN
+    Trigger --> CONN
+
+    %% 安全链路独立于主 FPGA
+    MCU --> PMIC
+    MCU -->|"安全互锁 / ID"| CONN
 ```
 
 ## FPGA 选型原则
@@ -577,6 +584,28 @@ IO Matrix / DDR DMA / Extension Interface
 - 资源分配由 Resource Manager 管理
 - Pattern/Capture/协议控制器可组合使用
 - 错误状态可读、可复位、可追踪
+
+### Bitstream / 配置模式策略
+
+三种工作模式（数字测试 / MCU 模拟 / FPGA 原型对拖），以及原型模式下核心板要扮演的 SPI Slave、外设仿真等角色，**采用何种配置方式必须先定，否则固件架构与上位机切换流程无从设计**。
+
+V1 决策：**单 bitstream + 运行时配置（run-time reconfiguration），不做多 bitstream 重配切换。**
+
+```text
+· 单一 bitstream 包含 Pattern/Capture/协议/Trigger 全部引擎
+· 工作模式 = Resource Manager 按配置文件 run-time 选路与参数化，不重新加载 bitstream
+· 原型模式的 SPI Slave / 外设仿真等"角色"，作为协议控制器的可配置工作模式，
+  不是单独 bitstream
+· 好处：模式切换快、bring-up 一次性、上位机切模式无需等重配、固件版本单一可控
+```
+
+推迟到 V2+（明确不在 V1）：
+
+- 多 bitstream / 局部重配（Partial Reconfiguration）
+- 用户自定义逻辑热插拔
+- 按 DUT 动态裁剪资源以省逻辑
+
+> 这与本节"统一寄存器接口 + Resource Manager 管资源"的模块化原则一致：模式是配置出来的，不是换 bitstream 换出来的。呼应 [[14-配置文件Schema规范]] 的 `test_plan` 模式选择由配置驱动。
 
 ## Bring-up 测试计划
 

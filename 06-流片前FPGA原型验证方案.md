@@ -68,17 +68,17 @@
 
 ```mermaid
 flowchart LR
-    PC[上位机测试脚本]
-    Core[核心 FPGA 主板\nPattern / 协议 / Capture / Trigger]
-    Adapter[FPGA 原型验证对接板\n电平转换 / 连接器 / 保护]
-    UserFPGA[用户业务 FPGA / 原型系统]
-    Debug[ILA / 逻辑分析仪 / 示波器]
+    PC["上位机测试脚本"]
+    Core["核心 FPGA 主板<br/>Pattern / 协议 / Capture / Trigger"]
+    Adapter["FPGA 原型验证对接板<br/>电平转换 / 连接器 / 保护"]
+    UserFPGA["用户业务 FPGA / 原型系统"]
+    Debug["ILA / 逻辑分析仪 / 示波器"]
 
-    PC --> Core
-    Core <--> Adapter
-    Adapter <--> UserFPGA
-    Core --> Debug
-    UserFPGA --> Debug
+    PC <--> Core
+    Core <-->|"激励 + 采集"| Adapter
+    Adapter <-->|"对拖"| UserFPGA
+    Core -.->|"Trigger 同步"| Debug
+    UserFPGA -.-> Debug
 ```
 
 核心板可承担：
